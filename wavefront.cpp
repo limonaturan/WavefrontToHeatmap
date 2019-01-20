@@ -3,6 +3,7 @@
 Coordinate3D::Coordinate3D()
 {
     x = y = z = 0.;
+    isValid = false;
 }
 
 Coordinate3D::Coordinate3D(double X, double Y, double Z)
@@ -10,6 +11,15 @@ Coordinate3D::Coordinate3D(double X, double Y, double Z)
     x = X;
     y = Y;
     z = Z;
+    isValid = true;
+}
+
+Coordinate3D::Coordinate3D(double X, double Y)
+{
+    x = X;
+    y = Y;
+    z = 0.;
+    isValid = false;
 }
 
 Coordinate2D::Coordinate2D()
@@ -69,13 +79,20 @@ bool WavefrontFace::isPointInPolygon(Coordinate2D Point)
     return c;
 }
 
-double WavefrontFace::getHeight(Coordinate2D Point)
+Coordinate3D WavefrontFace::getHeight(Coordinate2D Point)
 {
-    double minDouble = -999999.;
-    if(normal.z == 0.)
-        return minDouble;
-    else
-        return vertices[0].z-((vertices[0].x-Point.x)*normal.x + (vertices[0].y-Point.y)*normal.y)/normal.z;
+    Coordinate3D vertex = Coordinate3D(Point.x, Point.y, 0);
+    if(normal.z == 0.) {
+        vertex.isValid = false;
+        return vertex;
+    }
+    else {
+        double X = (vertices[0].x-vertex.x)*normal.x;
+        double Y = (vertices[0].y-vertex.y)*normal.y;
+        vertex.z = vertices[0].z+(X + Y)/normal.z;
+        vertex.isValid = true;
+        return vertex;
+    }
 }
 
 WavefrontObject::WavefrontObject()
@@ -84,41 +101,138 @@ WavefrontObject::WavefrontObject()
     isActive = true;
 }
 
-Wavefront::Wavefront(QString Filename)
+Wavefront::Wavefront(QString Filename, bool commandLineOutput)
 {
+    QCoreApplication::processEvents();
+    timer = new QTimer(this);
+    connect(timer, SIGNAL(timeout()), this, SLOT(outputProgress()));
+    this->commandLineOutput = commandLineOutput;
     filename = Filename;
     getObjects(Filename);
 }
 
-void Wavefront::getHeatmap(double Precision)
+Wavefront::~Wavefront()
 {
+    timer->stop();
+}
+
+Grid Wavefront::getHeatmap(double Precision)
+{
+    bool isPointInPolygon;
+    WavefrontFace face;
+    Coordinate2D faceMinimumPoint, faceMaximumPoint;
+    Pixel2D faceMinimumPixel, faceMaximumPixel;
+    Coordinate3D oldVertex, newVertex;
+    QDateTime timeEnd, timeLastUpdate;
+    timeStart = QDateTime::currentDateTime();
+    timeLastUpdate = timeStart;
+
     Grid grid = Grid(getMinimum(), getMaximum(), Precision);
-    double zMin = 99999.;
-    double zMax = -9999.;
+
+    totalNumberOfIterations = getNumberOfIterations(grid);
+    iteration = 0;
+    timer->start(1000);
 
     for(int i=0; i<objects.size(); i++) {
         for(int j=0; j<objects[i].faces.size(); j++) {
-            Coordinate2D faceMinimumPixel = grid.getFloorPixel(objects[i].faces[j].getMinimum());
-            Coordinate2D faceMaximumPixel = grid.getCeilPixel(objects[i].faces[j].getMaximum());
+            face = objects[i].faces[j];
 
-            for(int k=faceMinimumPixel.x; k<faceMaximumPixel.x; k++) {
-                for(int l=faceMinimumPixel.y; l<faceMaximumPixel.y; l++) {
-                    Coordinate2D point = Coordinate2D(grid.getCoordinate2D(Coordinate2D(k,l)));
-                    if(objects[i].faces[j].isPointInPolygon(point)) {
-                        double z = objects[i].faces[j].getHeight(point);
-                        if(z > grid.getValue(Coordinate2D(k,l))) {
-                            grid.setValue(Coordinate2D(k,l), z);
-                            if(zMin > z)
-                                zMin = z;
-                            if(zMax < z)
-                                zMax = z;
+            faceMinimumPoint = face.getMinimum();
+            faceMinimumPixel = grid.getFloorPixel(faceMinimumPoint);
+
+            faceMaximumPoint = face.getMaximum();
+            faceMaximumPixel = grid.getCeilPixel(faceMaximumPoint);
+
+            for(int k=faceMinimumPixel.i; k<=faceMaximumPixel.i; k++) {
+                for(int l=faceMinimumPixel.j; l<=faceMaximumPixel.j; l++) {
+                    QCoreApplication::processEvents();
+                    iteration += 1;
+                    oldVertex = grid.getCoordinate3D(Pixel2D(k,l));
+                    isPointInPolygon = face.isPointInPolygon(Coordinate2D(oldVertex.x,oldVertex.y));
+                    if(isPointInPolygon) {
+                        newVertex = face.getHeight(Coordinate2D(oldVertex.x,oldVertex.y));
+                        if(newVertex.isValid && (newVertex.z > oldVertex.z || !oldVertex.isValid)) {
+                            grid.setValue(Pixel2D(k,l), newVertex.z);
                         }
                     }
                 }
             }
         }
     }
-    qDebug() << "Fertig.";
+    timer->stop();
+    return grid;
+}
+
+double Wavefront::getWidth()
+{
+    Coordinate2D max = getMaximum();
+    Coordinate2D min = getMinimum();
+
+    return max.x - min.x;
+}
+
+double Wavefront::getHeight()
+{
+    Coordinate2D max = getMaximum();
+    Coordinate2D min = getMinimum();
+
+    return max.y - min.y;
+}
+
+
+QImage Wavefront::getImage(Grid grid)
+{
+    QImage image = QImage(grid.getWidth(), grid.getHeight(), QImage::Format_Grayscale8);
+    image.setColorCount(255);
+
+    for(int i=0; i<255; i++) {
+        image.setColor(i,QColor(i,i,i, 0).rgb());
+    }
+
+    grid.normalize();
+
+    int height = grid.getHeight();
+    int width  = grid.getWidth();
+
+    for(int i=0; i<width; i++) {
+        for(int j=0; j<height; j++) {
+            Coordinate3D coordinate3D = grid.getCoordinate3D(Pixel2D(i,j));
+            if(coordinate3D.isValid) {
+                int value = coordinate3D.z*255.;
+                image.setPixel(i, height-1-j, qRgb(value, value, value));
+            }
+            else {
+                image.setPixel(i, height-1-j, 0);
+            }
+        }
+    }
+    return image;
+}
+
+void Wavefront::saveImage(QImage Image, QString Filename)
+{
+    Image.save(Filename, "PNG", -1);
+}
+
+void Wavefront::outputProgress()
+{
+    double progress = double(iteration)/double(totalNumberOfIterations)*100.;
+    int elapsed = (QDateTime::currentDateTime().toMSecsSinceEpoch()-timeStart.toMSecsSinceEpoch())/1000;
+    int remaining = double(elapsed)/double(progress)*(100.-double(progress));
+    if(commandLineOutput) {
+        if(elapsed == 0) {
+            std::cout << "Progress: " << progress << " %. " <<
+                         "Elapsed: " << elapsed << " s. " << std::endl;
+        }
+        else {
+                std::cout << "Progress: " << progress << " %. " <<
+                             "Elapsed: " << elapsed << " s. " <<
+                             "Remaining: " << remaining << " s." << std::endl;
+        }
+    }
+    else {
+        // TODO: implement timed signal that informs about progress
+    }
 }
 
 QVector<WavefrontObject> Wavefront::getObjects(QString Filename)
@@ -217,71 +331,106 @@ Coordinate2D Wavefront::getMaximum()
     return maximum;
 }
 
+int Wavefront::getNumberOfIterations(Grid grid)
+{
+    WavefrontFace face;
+    Coordinate2D faceMinimumPoint, faceMaximumPoint;
+    Pixel2D faceMinimumPixel, faceMaximumPixel;
+    int number = 0;
+    for(int i=0; i<objects.size(); i++) {
+        for(int j=0; j<objects[i].faces.size(); j++) {
+            face = objects[i].faces[j];
+
+            faceMinimumPoint = face.getMinimum();
+            faceMinimumPixel = grid.getFloorPixel(faceMinimumPoint);
+
+            faceMaximumPoint = face.getMaximum();
+            faceMaximumPixel = grid.getCeilPixel(faceMaximumPoint);
+
+            number += (faceMaximumPixel.i - faceMinimumPixel.i + 1)*(faceMaximumPixel.j - faceMinimumPixel.j + 1);
+        }
+    }
+    return number;
+}
+
 Grid::Grid(Coordinate2D Minimum, Coordinate2D Maximum, double Precision)
 {
     double lengthX = Maximum.x - Minimum.x;
     double lengthY = Maximum.y - Minimum.y;
     height = int(lengthY/Precision);
     width = int(lengthX/Precision);
-    double minDouble = -9999999.;
+    minimum = Minimum;
+    maximum = Maximum;
+
+
+    double slopeX, slopeY;
+    if(width == 1)
+        slopeX = 0.;
+    else
+        slopeX = lengthX/double(width-1);
+
+    if(height == 1)
+        slopeY = 0.;
+    else
+        slopeY = lengthY/double(height-1);
 
     pixels.resize(width);
-
     for(int i=0; i<width; i++) {
         pixels[i].resize(height);
         for(int j=0; j<height; j++) {
-            pixels[i][j] = Coordinate3D(Minimum.x+double(i)/double(width-1)*lengthX, Minimum.y+double(j)/double(height-1)*lengthY, minDouble);
+            pixels[i][j] = Coordinate3D(Minimum.x+double(i)*slopeX, Minimum.y+double(j)*slopeY);
         }
     }
 }
 
-void Grid::setValue(Coordinate2D Pixel, double Value)
+void Grid::setValue(Pixel2D Pixel, double Value)
 {
-    pixels[int(Pixel.x)][int(Pixel.y)].z = Value;
+    pixels[Pixel.i][Pixel.j].z = Value;
+    pixels[Pixel.i][Pixel.j].isValid = true;
 }
 
-double Grid::getValue(Coordinate2D Pixel)
+Coordinate3D Grid::getCoordinate3D(Pixel2D Pixel)
 {
-    return pixels[int(Pixel.x)][int(Pixel.y)].z;
+    return pixels[Pixel.i][Pixel.j];
 }
 
-Coordinate2D Grid::getCoordinate2D(Coordinate2D Pixel)
+Coordinate2D Grid::getCoordinate2D(Pixel2D Pixel)
 {
-    Coordinate3D c = pixels[int(Pixel.x)][int(Pixel.y)];
+    Coordinate3D c = pixels[Pixel.i][Pixel.j];
     return Coordinate2D(c.x,c.y);
 }
 
-Coordinate2D Grid::getFloorPixel(Coordinate2D Point)
+Pixel2D Grid::getFloorPixel(Coordinate2D Point)
 {
-    Coordinate2D minimumPixel = Coordinate2D(0, 0);
-    for(int i=0; i<height; i++) {
-        if(pixels[0][i].y > Point.y)
+    Pixel2D minimumPixel = Pixel2D(0, 0);
+    for(int j=0; j<height; j++) {
+        if(pixels[0][j].y > Point.y)
             break;
-        minimumPixel.y = i;
+        minimumPixel.j = j;
     }
 
     for(int i=0; i<width; i++) {
         if(pixels[i][0].x > Point.x)
             break;
-        minimumPixel.x = i;
+        minimumPixel.i = i;
     }
 
     return minimumPixel;
 }
 
-Coordinate2D Grid::getCeilPixel(Coordinate2D Point)
+Pixel2D Grid::getCeilPixel(Coordinate2D Point)
 {
-    Coordinate2D maximumPixel = Coordinate2D(width-1, height-1);
-    for(int i=0; i<height; i++) {
-        if(pixels[0][i].y < Point.y)
+    Pixel2D maximumPixel = Pixel2D(width-1, height-1);
+    for(int j=0; j<height; j++) {
+        if(pixels[0][j].y < Point.y)
             break;
-        maximumPixel.y = i;
+        maximumPixel.j = j;
     }
 
     for(int i=0; i<width; i++) {
         if(pixels[i][0].x < Point.x)
             break;
-        maximumPixel.x = i;
+        maximumPixel.i = i;
     }
 
     return maximumPixel;
@@ -295,4 +444,50 @@ int Grid::getHeight()
 int Grid::getWidth()
 {
     return width;
+}
+
+void Grid::normalize()
+{
+    double globalMax = -99999.;
+    double globalMin = 99999.;
+    for(int i=0; i<width; i++) {
+        for(int j=0; j<height; j++) {
+            if(!pixels[i][j].isValid)
+                continue;
+            Coordinate3D p = pixels[i][j];
+            if(globalMax < p.z)
+                globalMax = p.z;
+            if(globalMin > p.z)
+                globalMin = p.z;
+        }
+    }
+
+    double delta = globalMax - globalMin;
+
+    for(int i=0; i<width; i++) {
+        for(int j=0; j<height; j++) {
+            if(pixels[i][j].isValid)
+                pixels[i][j].z = (pixels[i][j].z - globalMin)/delta;
+        }
+    }
+}
+
+Pixel2D::Pixel2D()
+{
+    i = j = 0;
+    isValid = false;
+}
+
+Pixel2D::Pixel2D(int I, int J)
+{
+    i = I;
+    j = J;
+    isValid = true;
+}
+
+Pixel3D::Pixel3D()
+{
+    i = j = 0;
+    value = 0.;
+    isValid = false;
 }
