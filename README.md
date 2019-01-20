@@ -7,5 +7,5 @@ Convert a wavefront file to a heatmap.
 WavefrontToHeatmap -i file.obj 
 ```
 
-![alt text](https://github.com/limonaturan/WavefrontToHeatmap/Monkey.png)
+![alt text](https://github.com/limonaturan/WavefrontToHeatmap/blob/master/Monkey.png)
 
