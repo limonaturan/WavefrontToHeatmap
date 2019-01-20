@@ -1,8 +1,8 @@
 # WavefrontToHeatmap
 Convert a wavefront file to a heatmap.
 
+<b>Example 1: </b>
+
 ```
-function test() {
-  console.log("notice the blank line before this function?");
-}
+WavefrontToHeatmap -i file.obj 
 ```
