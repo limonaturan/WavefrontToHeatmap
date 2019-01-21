@@ -1,5 +1,5 @@
 # WavefrontToHeatmap
-Convert a wavefront file to a heatmap.
+Convert a [Wavefront OBJ](https://en.wikipedia.org/wiki/Wavefront_.obj_file) file to a heatmap.
 
 <b>Example 1: </b>
 
