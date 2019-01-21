@@ -15,7 +15,7 @@ You have to at least specify an input obj file.
 WavefrontToHeatmap -i Monkey.obj 
 ```
 
-## Setting the output resoluton
+## Setting the output resolution
 By specifying the command line argument -c you can set the (approximate) pixel count of the output file. The default value is 500000.
 ```
 WavefrontToHeatmap -i Monkey.obj -c 1000
