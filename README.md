@@ -11,7 +11,7 @@ WavefrontToHeatmap -h
 
 ## Example
 ```
-WavefrontToHeatmap -i file.obj 
+WavefrontToHeatmap -i Monkey.obj 
 ```
 
 ![alt text](https://github.com/limonaturan/WavefrontToHeatmap/blob/master/Monkey.png)
