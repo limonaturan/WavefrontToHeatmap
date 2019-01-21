@@ -10,6 +10,7 @@ WavefrontToHeatmap -h
 ```
 
 ## Minimal example
+You have to at least specify an input obj file.
 ```
 WavefrontToHeatmap -i Monkey.obj 
 ```
